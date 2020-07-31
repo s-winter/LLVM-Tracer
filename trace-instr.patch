@@ -1,0 +1,158 @@
+diff --git a/full-trace/full_trace.cpp b/full-trace/full_trace.cpp
+index 2083769..dd932b6 100644
+--- a/full-trace/full_trace.cpp
++++ b/full-trace/full_trace.cpp
+@@ -114,11 +114,9 @@ static Constant *createStringArg(const char *string, Module *curr_module) {
+     GlobalVariable *gvar_array = new GlobalVariable(
+         *curr_module, ArrayTy_0, true, GlobalValue::PrivateLinkage, 0, ".str");
+     gvar_array->setInitializer(v_string);
+-    std::vector<Constant *> indices;
+     ConstantInt *zero = ConstantInt::get(curr_module->getContext(),
+                                          APInt(32, StringRef("0"), 10));
+-    indices.push_back(zero);
+-    indices.push_back(zero);
++    std::vector<Constant *> indices{zero, zero};
+     return ConstantExpr::getGetElementPtr(gvar_array, indices);
+ }
+ 
+@@ -207,6 +205,9 @@ bool Tracer::doInitialization(Module &M) {
+   TL_log_double = M.getOrInsertFunction( "trace_logger_log_double", VoidTy,
+       I64Ty, I64Ty, DoubleTy, I64Ty, I8PtrTy, I64Ty, I8PtrTy, nullptr);
+ 
++  TL_mylog = M.getOrInsertFunction( "my_trace_logger_log", VoidTy,
++      I64Ty, I8PtrTy, I8PtrTy, I8PtrTy, I8PtrTy, nullptr);
++
+   if (func_string.empty()) {
+     errs() << "\n\nPlease set WORKLOAD as an environment variable!\n\n\n";
+     return false;
+@@ -288,6 +289,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
+     slotToVarName.clear();
+   }
+ 
++#if 0
+   if (!is_toplevel_mode && !isTrackedFunction(funcName))
+     return false;
+ 
+@@ -297,13 +299,16 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
+   if (verbose)
+     std::cout << "Tracking function: " << funcName << std::endl;
+ 
++#endif
+   // We have to get the first insertion point before we insert any
+   // instrumentation!
+   BasicBlock::iterator insertp = BB.getFirstInsertionPt();
+ 
++#if 0
+   BasicBlock::iterator itr = BB.begin();
+   if (isa<PHINode>(itr))
+     handlePhiNodes(&BB, &env);
++#endif
+ 
+   // From this point onwards, nodes cannot be PHI nodes.
+   BasicBlock::iterator nextitr;
+@@ -325,14 +330,17 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
+       // hardware, so skip it. Also, skip intrinsics.
+       if (!fun || fun->isIntrinsic())
+         continue;
++#if 0
+       if (!is_toplevel_mode) {
+         std::string callfunc = fun->getName().str();
+         traceCall = traceOrNot(callfunc);
+         if (!traceCall)
+           continue;
+       }
++#endif
+     }
+ 
++#if 0
+     if (isa<CallInst>(itr) && traceCall) {
+       handleCallInstruction(itr, &env);
+     } else {
+@@ -346,6 +354,10 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
+     if (isa<AllocaInst>(itr)) {
+       processAllocaInstruction(itr);
+     }
++#else
++    myPrint(itr);
++    fprintf(stderr, ".");
++#endif
+   }
+   return false;
+ }
+@@ -442,6 +454,30 @@ void Tracer::printFirstLine(Instruction *I, InstEnv *env, unsigned opcode) {
+   IRB.CreateCall(TL_log0, args);
+ }
+ 
++void Tracer::myPrint(Instruction *I) {
++  const BasicBlock *bb = I->getParent();
++  if(!bb) {
++    return;
++  }
++  const Function *func = bb->getParent();
++  if(!func) {
++    return;
++  }
++  const DebugLoc &loc = I->getDebugLoc();
++
++  IRBuilder<> IRB(I);
++  Value *v_linenumber = ConstantInt::get(IRB.getInt64Ty(), loc.getLine());
++  Constant *vv_func_name = createStringArg(func->getName().str().c_str(), curr_module);
++  Constant *vv_file_name = createStringArg(DIScope(loc.getScope(curr_module->getContext())).getFilename().str().c_str(), curr_module);
++  Constant *vv_src_str = createStringArg("", curr_module);
++  std::string instr_str;
++  raw_string_ostream instr_stream(instr_str);
++  instr_stream << *I;
++  Constant *vv_instr_str = createStringArg(instr_stream.str().c_str(), curr_module);
++  Value *args[] = { v_linenumber, vv_file_name, vv_src_str, vv_instr_str, vv_func_name };
++  IRB.CreateCall(TL_mylog, args);
++}
++
+ unsigned Tracer::opcodeToFixedPoint(unsigned opcode) {
+   switch (opcode) {
+     case Instruction::FAdd:
+diff --git a/full-trace/full_trace.h b/full-trace/full_trace.h
+index 80e090f..292ba68 100644
+--- a/full-trace/full_trace.h
++++ b/full-trace/full_trace.h
+@@ -118,6 +118,7 @@ class Tracer : public FunctionPass {
+                         const char *prev_bbid = s_phi);
+ 
+     void printParamLine(Instruction *I, InstOperandParams *params);
++    void myPrint(Instruction *I);
+ 
+     // Should we trace this function or not?
+     bool traceOrNot(std::string& func);
+@@ -176,6 +177,7 @@ class Tracer : public FunctionPass {
+     Value *TL_log0;
+     Value *TL_log_int;
+     Value *TL_log_double;
++    Value *TL_mylog;
+ 
+     // The current module.
+     Module *curr_module;
+diff --git a/profile-func/trace_logger.c b/profile-func/trace_logger.c
+index 5c9e7e7..9939383 100644
+--- a/profile-func/trace_logger.c
++++ b/profile-func/trace_logger.c
+@@ -56,7 +56,7 @@ void trace_logger_init() {
+   current_toplevel_function = (char*) calloc(MAX_FUNC_NAME_LEN, 1);
+   current_logging_status = DO_NOT_LOG;
+ 
+-  atexit(&trace_logger_fin);
++  //atexit(&trace_logger_fin);
+ }
+ 
+ void trace_logger_fin() {
+@@ -208,3 +208,12 @@ void trace_logger_log_double(int line, int size, double value, int is_reg,
+   else
+     gzprintf(full_trace_file, ",\n");
+ }
++
++void my_trace_logger_log(int line, const char *file, const char *src, const char *instr, const char *func) {
++  if (!initp) {
++    trace_logger_init();
++    initp = true;
++  }
++  //gzprintf(full_trace_file, "%s:%-6d %s\n", file, line, str):
++  gzprintf(full_trace_file, "%s:%-6d: (%s) %s\n", file, line, func, instr);
++}

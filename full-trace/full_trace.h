@@ -118,6 +118,7 @@ class Tracer : public FunctionPass {
                         const char *prev_bbid = s_phi);
 
     void printParamLine(Instruction *I, InstOperandParams *params);
+    void myPrint(Instruction *I);
 
     // Should we trace this function or not?
     bool traceOrNot(std::string& func);
@@ -176,6 +177,7 @@ class Tracer : public FunctionPass {
     Value *TL_log0;
     Value *TL_log_int;
     Value *TL_log_double;
+    Value *TL_mylog;
 
     // The current module.
     Module *curr_module;

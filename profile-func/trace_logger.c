@@ -56,7 +56,7 @@ void trace_logger_init() {
   current_toplevel_function = (char*) calloc(MAX_FUNC_NAME_LEN, 1);
   current_logging_status = DO_NOT_LOG;
 
-  atexit(&trace_logger_fin);
+  //atexit(&trace_logger_fin);
 }
 
 void trace_logger_fin() {
@@ -207,4 +207,13 @@ void trace_logger_log_double(int line, int size, double value, int is_reg,
     gzprintf(full_trace_file, ",%s,\n", prev_bbid);
   else
     gzprintf(full_trace_file, ",\n");
+}
+
+void my_trace_logger_log(int line, const char *file, const char *src, const char *instr, const char *func) {
+  if (!initp) {
+    trace_logger_init();
+    initp = true;
+  }
+  //gzprintf(full_trace_file, "%s:%-6d %s\n", file, line, str):
+  gzprintf(full_trace_file, "%s:%-6d: (%s) %s\n", file, line, func, instr);
 }

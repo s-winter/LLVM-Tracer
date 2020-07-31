@@ -114,11 +114,9 @@ static Constant *createStringArg(const char *string, Module *curr_module) {
     GlobalVariable *gvar_array = new GlobalVariable(
         *curr_module, ArrayTy_0, true, GlobalValue::PrivateLinkage, 0, ".str");
     gvar_array->setInitializer(v_string);
-    std::vector<Constant *> indices;
     ConstantInt *zero = ConstantInt::get(curr_module->getContext(),
                                          APInt(32, StringRef("0"), 10));
-    indices.push_back(zero);
-    indices.push_back(zero);
+    std::vector<Constant *> indices{zero, zero};
     return ConstantExpr::getGetElementPtr(gvar_array, indices);
 }
 
@@ -207,6 +205,9 @@ bool Tracer::doInitialization(Module &M) {
   TL_log_double = M.getOrInsertFunction( "trace_logger_log_double", VoidTy,
       I64Ty, I64Ty, DoubleTy, I64Ty, I8PtrTy, I64Ty, I8PtrTy, nullptr);
 
+  TL_mylog = M.getOrInsertFunction( "my_trace_logger_log", VoidTy,
+      I64Ty, I8PtrTy, I8PtrTy, I8PtrTy, I8PtrTy, nullptr);
+
   if (func_string.empty()) {
     errs() << "\n\nPlease set WORKLOAD as an environment variable!\n\n\n";
     return false;
@@ -288,6 +289,7 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
     slotToVarName.clear();
   }
 
+#if 0
   if (!is_toplevel_mode && !isTrackedFunction(funcName))
     return false;
 
@@ -297,13 +299,16 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
   if (verbose)
     std::cout << "Tracking function: " << funcName << std::endl;
 
+#endif
   // We have to get the first insertion point before we insert any
   // instrumentation!
   BasicBlock::iterator insertp = BB.getFirstInsertionPt();
 
+#if 0
   BasicBlock::iterator itr = BB.begin();
   if (isa<PHINode>(itr))
     handlePhiNodes(&BB, &env);
+#endif
 
   // From this point onwards, nodes cannot be PHI nodes.
   BasicBlock::iterator nextitr;
@@ -325,14 +330,17 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
       // hardware, so skip it. Also, skip intrinsics.
       if (!fun || fun->isIntrinsic())
         continue;
+#if 0
       if (!is_toplevel_mode) {
         std::string callfunc = fun->getName().str();
         traceCall = traceOrNot(callfunc);
         if (!traceCall)
           continue;
       }
+#endif
     }
 
+#if 0
     if (isa<CallInst>(itr) && traceCall) {
       handleCallInstruction(itr, &env);
     } else {
@@ -346,6 +354,10 @@ bool Tracer::runOnBasicBlock(BasicBlock &BB) {
     if (isa<AllocaInst>(itr)) {
       processAllocaInstruction(itr);
     }
+#else
+    myPrint(itr);
+    fprintf(stderr, ".");
+#endif
   }
   return false;
 }
@@ -440,6 +452,30 @@ void Tracer::printFirstLine(Instruction *I, InstEnv *env, unsigned opcode) {
                     vv_inst,           v_opty,       v_is_tracked_function,
                     v_is_toplevel_mode };
   IRB.CreateCall(TL_log0, args);
+}
+
+void Tracer::myPrint(Instruction *I) {
+  const BasicBlock *bb = I->getParent();
+  if(!bb) {
+    return;
+  }
+  const Function *func = bb->getParent();
+  if(!func) {
+    return;
+  }
+  const DebugLoc &loc = I->getDebugLoc();
+
+  IRBuilder<> IRB(I);
+  Value *v_linenumber = ConstantInt::get(IRB.getInt64Ty(), loc.getLine());
+  Constant *vv_func_name = createStringArg(func->getName().str().c_str(), curr_module);
+  Constant *vv_file_name = createStringArg(DIScope(loc.getScope(curr_module->getContext())).getFilename().str().c_str(), curr_module);
+  Constant *vv_src_str = createStringArg("", curr_module);
+  std::string instr_str;
+  raw_string_ostream instr_stream(instr_str);
+  instr_stream << *I;
+  Constant *vv_instr_str = createStringArg(instr_stream.str().c_str(), curr_module);
+  Value *args[] = { v_linenumber, vv_file_name, vv_src_str, vv_instr_str, vv_func_name };
+  IRB.CreateCall(TL_mylog, args);
 }
 
 unsigned Tracer::opcodeToFixedPoint(unsigned opcode) {
